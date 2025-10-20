@@ -14,11 +14,6 @@
     "posttest": "npm run lint",
     "eslint": "eslint \"**/*.{js,cjs,ts,mjs,jsx,tsx}\""
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/npm/cli.git",
-    "directory": "mock-globals"
-  },
   "keywords": [],
   "author": "GitHub Inc.",
   "license": "ISC",
@@ -43,14 +38,14 @@
     "functions": 97,
     "lines": 97,
     "statements": 97,
-    "nyc-arg": [
-      "--exclude",
-      "tap-snapshots/**"
-    ]
+    "show-full-coverage": true
   },
   "devDependencies": {
     "@npmcli/eslint-config": "^5.0.1",
     "@npmcli/template-oss": "4.25.1",
-    "tap": "^16.3.8"
+    "tap": "^21.1.1"
+  },
+  "nyc": {
+    "exclude": []
   }
 }

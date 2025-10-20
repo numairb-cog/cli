@@ -32,12 +32,7 @@
     "@npmcli/template-oss": "4.25.1",
     "minipass": "^7.1.1",
     "nock": "^13.3.3",
-    "tap": "^16.3.8"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/npm/cli.git",
-    "directory": "workspaces/libnpmorg"
+    "tap": "^21.1.1"
   },
   "bugs": "https://github.com/npm/libnpmorg/issues",
   "homepage": "https://npmjs.com/package/libnpmorg",
@@ -54,9 +49,9 @@
     "content": "../../scripts/template-oss/index.js"
   },
   "tap": {
-    "nyc-arg": [
-      "--exclude",
-      "tap-snapshots/**"
-    ]
+    "show-full-coverage": true
+  },
+  "nyc": {
+    "exclude": []
   }
 }
