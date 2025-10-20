@@ -277,7 +277,7 @@ jobs:
         with:
           install-dir: C:\cygwin64
       - name: Run Windows Shims Tests
-        run: node . test --ignore-scripts -- test/bin/windows-shims.js --no-coverage
+        run: node . test --ignore-scripts -- test/bin/windows-shims.js --disable-coverage
         env:
           WINDOWS_SHIMS_TEST: true
       - name: Check Git Status
