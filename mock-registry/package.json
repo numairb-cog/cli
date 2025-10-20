@@ -14,11 +14,6 @@
     "posttest": "npm run lint",
     "eslint": "eslint \"**/*.{js,cjs,ts,mjs,jsx,tsx}\""
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/npm/cli.git",
-    "directory": "mock-registry"
-  },
   "keywords": [],
   "author": "GitHub Inc.",
   "license": "ISC",
@@ -39,11 +34,8 @@
     "content": "../scripts/template-oss/index.js"
   },
   "tap": {
-    "no-coverage": true,
-    "nyc-arg": [
-      "--exclude",
-      "tap-snapshots/**"
-    ]
+    "coverage": false,
+    "show-full-coverage": true
   },
   "devDependencies": {
     "@npmcli/arborist": "^9.1.2",
@@ -53,6 +45,9 @@
     "nock": "^13.3.3",
     "npm-package-arg": "^13.0.0",
     "pacote": "^21.0.2",
-    "tap": "^16.3.8"
+    "tap": "^21.1.1"
+  },
+  "nyc": {
+    "exclude": []
   }
 }
