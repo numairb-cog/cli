@@ -23,7 +23,7 @@ This is a **Golang rewrite** of the npm CLI (Node Package Manager). The original
 ```bash
 # Clone the repository
 git clone https://github.com/numairb-cog/cli.git
-cd cli
+cd cli/go-cli
 
 # Build the binaries
 make build
@@ -208,7 +208,7 @@ Configuration precedence (highest to lowest):
 ### Project Structure
 
 ```
-.
+go-cli/
 ├── main.go              # Main npm CLI entry point
 ├── npx.go               # npx wrapper entry point
 ├── cmd/                 # Command implementations
@@ -222,7 +222,7 @@ Configuration precedence (highest to lowest):
 ├── go.mod               # Go module definition
 ├── go.sum               # Go module checksums
 ├── Makefile             # Build automation
-└── README.go.md         # This file
+└── README.md            # This file
 ```
 
 ### Building
@@ -300,9 +300,9 @@ Artistic-2.0 (same as original npm)
 This Go implementation maintains command-line compatibility with the Node.js version, so existing scripts and workflows should work without modification. The main difference is that you'll be using a compiled Go binary instead of a Node.js application.
 
 To use this version alongside the Node.js version:
-1. Build the Go version: `make build`
-2. Use the full path to the binary: `/path/to/build/npm <command>`
-3. Or rename the binary: `mv build/npm build/npm-go`
+1. Build the Go version: `cd go-cli && make build`
+2. Use the full path to the binary: `/path/to/go-cli/build/npm <command>`
+3. Or rename the binary: `mv go-cli/build/npm go-cli/build/npm-go`
 
 ## Support
 

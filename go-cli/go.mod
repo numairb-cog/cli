@@ -1,4 +1,4 @@
-module github.com/numairb-cog/cli
+module github.com/numairb-cog/cli/go-cli
 
 go 1.21.5
 

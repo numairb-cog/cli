@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/numairb-cog/cli/cmd"
+	"github.com/numairb-cog/cli/go-cli/cmd"
 )
 
 func main() {
