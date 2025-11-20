@@ -48,6 +48,7 @@ tap-testdir*/
 !/smoke-tests/
 !/mock-globals/
 !/mock-registry/
+!/go-cli/
 !/workspaces/
 /workspaces/*
 !/workspaces/arborist/
