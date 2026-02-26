@@ -57,6 +57,9 @@ jobs:
       - name: Create Node Pull Request
         env:
           GITHUB_TOKEN: ${{ secrets.NODE_PULL_REQUEST_TOKEN }}
+          INPUT_DRY_RUN: ${{ inputs.dryRun }}
+          INPUT_SPEC: ${{ inputs.spec }}
+          INPUT_BRANCH: ${{ inputs.branch }}
         run: |
-          DRY_RUN=$([ -z "${{ inputs.dryRun }}" ] && echo "" || echo "--dry-run")
-          node scripts/create-node-pr.js ${{ inputs.spec }} ${{ inputs.branch }} "$DRY_RUN"
+          DRY_RUN=$([ -z "$INPUT_DRY_RUN" ] && echo "" || echo "--dry-run")
+          node scripts/create-node-pr.js "$INPUT_SPEC" "$INPUT_BRANCH" "$DRY_RUN"

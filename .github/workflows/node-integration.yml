@@ -52,6 +52,9 @@ jobs:
           override_cache_key: nodejs-${{ inputs.nodeVersion }}
       - name: build nodejs
         id: build-nodejs
+        env:
+          INPUT_NODE_VERSION: ${{ inputs.nodeVersion }}
+          INPUT_NPM_VERSION: ${{ inputs.npmVersion }}
         run: |
           echo "::group::setup"
           set -eo pipefail
@@ -63,14 +66,14 @@ jobs:
           targetFile="${RUNNER_TEMP}/build.tgz"
           echo "::endgroup::"
 
-          echo "::group::finding nodejs version matching ${{ inputs.nodeVersion }}"
-          if [[ "${{ inputs.nodeVersion }}" == "nightly" ]]; then
+          echo "::group::finding nodejs version matching $INPUT_NODE_VERSION"
+          if [[ "$INPUT_NODE_VERSION" == "nightly" ]]; then
             nodeVersion=$(curl -sSL https://nodejs.org/download/nightly/index.json | jq -r .[0].version)
             nodeUrl="https://nodejs.org/download/nightly/${nodeVersion}/node-${nodeVersion}.tar.gz"
           else
-            nodeVersion=$(curl -sSL https://nodejs.org/download/release/index.json | jq -r 'map(select(.version | test("^v${{ inputs.nodeVersion }}"))) | .[0].version')
+            nodeVersion=$(curl -sSL https://nodejs.org/download/release/index.json | jq -r --arg ver "$INPUT_NODE_VERSION" 'map(select(.version | test("^v" + $ver))) | .[0].version')
             if [[ -z "$nodeVersion" ]]; then
-              echo "::error ::unable to find released nodejs version matching: ${{ inputs.nodeVersion }}"
+              echo "::error ::unable to find released nodejs version matching: $INPUT_NODE_VERSION"
               exit 1
             fi
             nodeUrl="https://nodejs.org/download/release/${nodeVersion}/node-${nodeVersion}.tar.gz"
@@ -89,8 +92,8 @@ jobs:
           npmVersion=$(cat "${npmDir}/package.json" | jq -r '"\(.version)-git"')
           echo "::endgroup::"
 
-          if [[ "${{ inputs.npmVersion }}" != "git" ]]; then
-            npmVersion="${{ inputs.npmVersion }}"
+          if [[ "$INPUT_NPM_VERSION" != "git" ]]; then
+            npmVersion="$INPUT_NPM_VERSION"
             npmVersion="${npmVersion#v}"
             echo "::group::checking out npm@${npmVersion}"
             pushd "$npmDir" >/dev/null
@@ -359,6 +362,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    env: ${{ matrix.env }}
     steps:
       - name: download artifacts
         uses: actions/download-artifact@v4
@@ -384,18 +388,22 @@ jobs:
       - run: npm --version
       - name: download source
         id: download
+        env:
+          MATRIX_PACKAGE: ${{ matrix.package }}
+          MATRIX_REPO: ${{ matrix.repo }}
+          MATRIX_URL: ${{ matrix.url }}
         run: |
           set -eo pipefail
-          TARGET_DIR="${RUNNER_TEMP}/${{ matrix.package }}"
+          TARGET_DIR="${RUNNER_TEMP}/${MATRIX_PACKAGE}"
           mkdir -p "$TARGET_DIR"
           echo "target=$TARGET_DIR" >> $GITHUB_OUTPUT
 
-          if [[ -n "${{ matrix.repo }}" ]]; then
+          if [[ -n "$MATRIX_REPO" ]]; then
             export GIT_TERMINAL_PROMPT=0
             export GIT_SSH_COMMAND="ssh -oBatchMode=yes"
-            git clone --recurse-submodules "${{ matrix.repo }}" "$TARGET_DIR"
-          elif [[ -n "${{ matrix.url }}" ]]; then
-            curl -sSL "${{ matrix.url }}" | tar xz -C "$TARGET_DIR" --strip=1
+            git clone --recurse-submodules "$MATRIX_REPO" "$TARGET_DIR"
+          elif [[ -n "$MATRIX_URL" ]]; then
+            curl -sSL "$MATRIX_URL" | tar xz -C "$TARGET_DIR" --strip=1
           fi
 
           if [[ -f "${TARGET_DIR}/package-lock.json" ]]; then
@@ -405,11 +413,15 @@ jobs:
       - name: npm install ${{ matrix.install_flags }}
         id: npm-install
         working-directory: ${{ steps.download.outputs.target }}
+        env:
+          MATRIX_INSTALL_FLAGS: ${{ matrix.install_flags }}
+          MATRIX_KNOWN_FAILURE: ${{ matrix.knownFailure }}
+          NODE_DIR: ${{ steps.install.outputs.nodedir }}
         run: |
           set +e
-          npm install --nodedir="${{steps.install.outputs.nodedir }}" ${{ matrix.install_flags }}
+          npm install --nodedir="${NODE_DIR}" $MATRIX_INSTALL_FLAGS
           exitcode=$?
-          if [[ $exitcode -ne 0 && "${{ matrix.knownFailure }}" == "true" ]]; then
+          if [[ $exitcode -ne 0 && "$MATRIX_KNOWN_FAILURE" == "true" ]]; then
             echo "::warning ::npm install failed, exit $exitcode"
             echo "failed=true" >> $GITHUB_OUTPUT
             exit 0
@@ -418,12 +430,14 @@ jobs:
       - name: verify lockfileVersion unchanged
         working-directory: ${{ steps.download.outputs.target }}
         if: ${{ steps.download.outputs.lockfileVersion && steps.npm-install.outputs.failed != 'true' }}
+        env:
+          LOCKFILE_VERSION: ${{ steps.download.outputs.lockfileVersion }}
         run: |
           if [[ -f "package-lock.json" ]]; then
             newLockfileVersion=$(cat "package-lock.json" | jq .lockfileVersion)
-            if [[ "$newLockfileVersion" -ne "${{ steps.download.outputs.lockfileVersion }}" ]]; then
-              if [[ "${{ steps.download.outputs.lockfileVersion }}" -ne 1 ]]; then
-                echo "::error ::lockfileVersion changed from ${{ steps.download.outputs.lockfileVersion }} to $newLockfileVersion"
+            if [[ "$newLockfileVersion" -ne "$LOCKFILE_VERSION" ]]; then
+              if [[ "$LOCKFILE_VERSION" -ne 1 ]]; then
+                echo "::error ::lockfileVersion changed from $LOCKFILE_VERSION to $newLockfileVersion"
                 exit 1
               fi
             fi
@@ -437,7 +451,12 @@ jobs:
         id: command
         continue-on-error: true
         timeout-minutes: 10
-        env: ${{ matrix.env }}
+        env:
+          MATRIX_PACKAGE: ${{ matrix.package }}
+          MATRIX_KNOWN_FAILURE: ${{ matrix.knownFailure }}
+          MATRIX_FLAKY: ${{ matrix.flaky }}
+          MATRIX_COMMANDS_JSON: ${{ toJSON(matrix.commands) }}
+          NODE_DIR: ${{ steps.install.outputs.nodedir }}
         working-directory: ${{ steps.download.outputs.target }}
         if: ${{ steps.npm-install.outputs.failed != 'true' }}
         run: |
@@ -445,17 +464,17 @@ jobs:
           FINALEXIT=0
           STEPEXIT=0
 
-          export npm_config_nodedir="${{ steps.install.outputs.nodedir }}"
+          export npm_config_nodedir="${NODE_DIR}"
 
           # inlining some patches to make tests run
-          if [[ "${{ matrix.package }}" == "undici" ]]; then
+          if [[ "$MATRIX_PACKAGE" == "undici" ]]; then
             sed -i.bak 's/--experimental-wasm-simd //' package.json
             rm -f package.json.bak
             sed -i.bak 's/--experimental-wasm-simd//' .taprc
             rm -f .taprc.bak
           fi
 
-          for row in $(echo '${{ toJSON(matrix.commands) }}' | jq -r '.[] | @base64'); do
+          for row in $(echo "$MATRIX_COMMANDS_JSON" | jq -r '.[] | @base64'); do
             FAILCOUNT=0
             COMMAND=$(echo "$row" | base64 --decode)
             echo "::group::$COMMAND"
@@ -463,9 +482,9 @@ jobs:
             STEPEXIT=$?
             if [[ $STEPEXIT -ne 0 ]]; then
               FAILCOUNT=1
-              if [[ "${{ matrix.knownFailure }}" == "true" || "$NODE_VERSION" == "nightly" ]]; then
+              if [[ "$MATRIX_KNOWN_FAILURE" == "true" || "$NODE_VERSION" == "nightly" ]]; then
                 echo "::warning ::$COMMAND failed, exit: $STEPEXIT"
-              elif [[ "${{ matrix.flaky }}" ]]; then
+              elif [[ "$MATRIX_FLAKY" ]]; then
                 while [[ $STEPEXIT -ne 0 && $FAILCOUNT -lt 3 ]]; do
                   $COMMAND
                   STEPEXIT=$?
@@ -486,10 +505,13 @@ jobs:
           done
           exit $FINALEXIT
       - name: Set conclusion
-        env: ${{ matrix.env }}
+        env:
+          COMMAND_OUTCOME: ${{ steps.command.outcome }}
+          MATRIX_FLAKY: ${{ matrix.flaky }}
+          MATRIX_KNOWN_FAILURE: ${{ matrix.knownFailure }}
         run: |
           EXIT=1
-          if [[ "${{ steps.command.outcome }}" == "success" || "${{ matrix.flaky }}" == "true" || "${{ matrix.knownFailure }}" == "true" || $NODE_VERSION == "nightly" ]]; then
+          if [[ "$COMMAND_OUTCOME" == "success" || "$MATRIX_FLAKY" == "true" || "$MATRIX_KNOWN_FAILURE" == "true" || $NODE_VERSION == "nightly" ]]; then
             EXIT=0
           fi
           exit $EXIT
