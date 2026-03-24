@@ -37,7 +37,6 @@ const COLS = 8;
 const ROWS = 8;
 const GEM_TYPES = 6;
 const SWAP_DURATION = 200;
-const FALL_SPEED = 0.012; // per ms per cell
 const MATCH_FLASH_DURATION = 300;
 const SPECIAL_EFFECT_DURATION = 500;
 const MIN_MATCH = 3;
@@ -683,7 +682,7 @@ function triggerSpecialGem(r, c, clearedSet) {
       const k = `${r},${cc}`;
       if (!clearedSet.has(k)) {
         clearedSet.add(k);
-        if (board[r][cc].special !== SPECIAL.NONE && (r !== r || cc !== c)) {
+        if (board[r][cc].special !== SPECIAL.NONE && cc !== c) {
           triggerSpecialGem(r, cc, clearedSet);
         }
       }
@@ -699,7 +698,7 @@ function triggerSpecialGem(r, c, clearedSet) {
       const k = `${rr},${c}`;
       if (!clearedSet.has(k)) {
         clearedSet.add(k);
-        if (board[rr][c].special !== SPECIAL.NONE && (rr !== r || c !== c)) {
+        if (board[rr][c].special !== SPECIAL.NONE && rr !== r) {
           triggerSpecialGem(rr, c, clearedSet);
         }
       }
