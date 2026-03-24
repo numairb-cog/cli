@@ -1,0 +1,1686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Jewel Cascade - Match 3 Puzzle</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #0a0a2e;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+canvas {
+  display: block;
+  margin: 0 auto;
+}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+// ============================================================
+// Jewel Cascade - A Match-3 Puzzle Game
+// Single self-contained HTML file, no dependencies
+// ============================================================
+
+(() => {
+'use strict';
+
+// --- Constants ---
+const COLS = 8;
+const ROWS = 8;
+const GEM_TYPES = 6;
+const SWAP_DURATION = 200;
+const MATCH_FLASH_DURATION = 300;
+const SPECIAL_EFFECT_DURATION = 500;
+const MIN_MATCH = 3;
+
+// Gem type enum
+const GEM = { NONE: -1, RED: 0, BLUE: 1, GREEN: 2, YELLOW: 3, PURPLE: 4, ORANGE: 5 };
+// Special types
+const SPECIAL = { NONE: 0, STRIPED_H: 1, STRIPED_V: 2, BOMB: 3, RAINBOW: 4 };
+
+// Colors for each gem type
+const GEM_COLORS = [
+  ['#ff4757', '#ff6b81', '#c0392b'], // Red - Diamond
+  ['#3742fa', '#5352ed', '#1e3799'], // Blue - Circle
+  ['#2ed573', '#7bed9f', '#009432'], // Green - Triangle
+  ['#ffa502', '#ffda79', '#cc8e35'], // Yellow - Star
+  ['#a55eea', '#d2b4de', '#6c3483'], // Purple - Hexagon
+  ['#ff6348', '#ffbe76', '#e55039'], // Orange - Pentagon
+];
+
+const GEM_SHAPES = ['diamond', 'circle', 'triangle', 'star', 'hexagon', 'pentagon'];
+
+// Level definitions
+const LEVELS = [
+  { target: 2000,  moves: 25, bg: ['#0f0c29', '#302b63', '#24243e'] },
+  { target: 5000,  moves: 22, bg: ['#1a2a6c', '#b21f1f', '#fdbb2d'] },
+  { target: 10000, moves: 20, bg: ['#0f2027', '#203a43', '#2c5364'] },
+  { target: 18000, moves: 18, bg: ['#2c3e50', '#4ca1af', '#2c3e50'] },
+  { target: 30000, moves: 15, bg: ['#360033', '#0b8793', '#360033'] },
+];
+
+// --- Audio Engine (Web Audio API) ---
+class AudioEngine {
+  constructor() {
+    this.ctx = null;
+    this.initialized = false;
+  }
+
+  init() {
+    if (this.initialized) return;
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.initialized = true;
+    } catch (e) { /* Audio not available */ }
+  }
+
+  play(type, pitch) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    switch (type) {
+      case 'swap':
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, now);
+        osc.frequency.exponentialRampToValueAtTime(660, now + 0.1);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+        osc.start(now);
+        osc.stop(now + 0.15);
+        break;
+
+      case 'match':
+        osc.type = 'sine';
+        const baseFreq = 523 + (pitch || 0) * 100;
+        osc.frequency.setValueAtTime(baseFreq, now);
+        osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.5, now + 0.15);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+        break;
+
+      case 'combo': {
+        const comboBase = 600 + (pitch || 0) * 150;
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(comboBase, now);
+        osc.frequency.exponentialRampToValueAtTime(comboBase * 2, now + 0.3);
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+        osc.start(now);
+        osc.stop(now + 0.35);
+        // Extra sparkle
+        const osc2 = this.ctx.createOscillator();
+        const gain2 = this.ctx.createGain();
+        osc2.connect(gain2);
+        gain2.connect(this.ctx.destination);
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(comboBase * 1.5, now + 0.1);
+        gain2.gain.setValueAtTime(0.15, now + 0.1);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+        osc2.start(now + 0.1);
+        osc2.stop(now + 0.4);
+        break;
+      }
+
+      case 'special': {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 0.4);
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        osc.start(now);
+        osc.stop(now + 0.5);
+        const osc3 = this.ctx.createOscillator();
+        const gain3 = this.ctx.createGain();
+        osc3.connect(gain3);
+        gain3.connect(this.ctx.destination);
+        osc3.type = 'sine';
+        osc3.frequency.setValueAtTime(800, now + 0.05);
+        osc3.frequency.exponentialRampToValueAtTime(1600, now + 0.45);
+        gain3.gain.setValueAtTime(0.1, now + 0.05);
+        gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        osc3.start(now + 0.05);
+        osc3.stop(now + 0.5);
+        break;
+      }
+
+      case 'levelComplete': {
+        const notes = [523, 659, 784, 1047];
+        notes.forEach((freq, i) => {
+          const o = this.ctx.createOscillator();
+          const g = this.ctx.createGain();
+          o.connect(g);
+          g.connect(this.ctx.destination);
+          o.type = 'sine';
+          o.frequency.setValueAtTime(freq, now + i * 0.15);
+          g.gain.setValueAtTime(0.2, now + i * 0.15);
+          g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.15 + 0.4);
+          o.start(now + i * 0.15);
+          o.stop(now + i * 0.15 + 0.4);
+        });
+        break;
+      }
+
+      case 'fail': {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(100, now + 0.5);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+        osc.start(now);
+        osc.stop(now + 0.6);
+        break;
+      }
+
+      default:
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, now);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+    }
+  }
+}
+
+// --- Particle System ---
+class Particle {
+  constructor(x, y, color, vx, vy, life, size) {
+    this.x = x;
+    this.y = y;
+    this.color = color;
+    this.vx = vx;
+    this.vy = vy;
+    this.life = life;
+    this.maxLife = life;
+    this.size = size || 3;
+    this.gravity = 0.15;
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += this.gravity;
+    this.life--;
+  }
+
+  draw(ctx) {
+    const alpha = Math.max(0, this.life / this.maxLife);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+class ParticleSystem {
+  constructor() {
+    this.particles = [];
+  }
+
+  emit(x, y, color, count, spread, life) {
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * spread + 1;
+      const vx = Math.cos(angle) * speed;
+      const vy = Math.sin(angle) * speed - 2;
+      const size = Math.random() * 4 + 2;
+      this.particles.push(new Particle(x, y, color, vx, vy, life || 40, size));
+    }
+  }
+
+  emitLine(x1, y1, x2, y2, color, count) {
+    for (let i = 0; i < count; i++) {
+      const t = Math.random();
+      const x = x1 + (x2 - x1) * t;
+      const y = y1 + (y2 - y1) * t;
+      const vx = (Math.random() - 0.5) * 4;
+      const vy = (Math.random() - 0.5) * 4 - 1;
+      this.particles.push(new Particle(x, y, color, vx, vy, 35, 3));
+    }
+  }
+
+  update() {
+    this.particles = this.particles.filter(p => p.life > 0);
+    this.particles.forEach(p => p.update());
+  }
+
+  draw(ctx) {
+    this.particles.forEach(p => p.draw(ctx));
+  }
+}
+
+// --- Gem Drawing Helpers ---
+function drawGemShape(ctx, type, cx, cy, size, colors, special) {
+  const [main, light, dark] = colors;
+
+  // Create gradient
+  const grad = ctx.createRadialGradient(cx - size * 0.2, cy - size * 0.2, size * 0.1, cx, cy, size);
+  grad.addColorStop(0, light);
+  grad.addColorStop(0.6, main);
+  grad.addColorStop(1, dark);
+
+  ctx.fillStyle = grad;
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 1.5;
+
+  const shape = GEM_SHAPES[type];
+
+  switch (shape) {
+    case 'diamond':
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - size);
+      ctx.lineTo(cx + size * 0.7, cy);
+      ctx.lineTo(cx, cy + size);
+      ctx.lineTo(cx - size * 0.7, cy);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Inner shine
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - size * 0.6);
+      ctx.lineTo(cx + size * 0.3, cy - size * 0.1);
+      ctx.lineTo(cx, cy + size * 0.1);
+      ctx.lineTo(cx - size * 0.3, cy - size * 0.1);
+      ctx.closePath();
+      ctx.fill();
+      break;
+
+    case 'circle':
+      ctx.beginPath();
+      ctx.arc(cx, cy, size * 0.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Shine
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.beginPath();
+      ctx.ellipse(cx - size * 0.2, cy - size * 0.25, size * 0.3, size * 0.2, -0.5, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+
+    case 'triangle':
+      ctx.beginPath();
+      const h = size * 0.9;
+      ctx.moveTo(cx, cy - h);
+      ctx.lineTo(cx + h * 0.866, cy + h * 0.5);
+      ctx.lineTo(cx - h * 0.866, cy + h * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Inner
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - h * 0.5);
+      ctx.lineTo(cx + h * 0.35, cy + h * 0.15);
+      ctx.lineTo(cx - h * 0.35, cy + h * 0.15);
+      ctx.closePath();
+      ctx.fill();
+      break;
+
+    case 'star': {
+      ctx.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const outerAngle = (i * 72 - 90) * Math.PI / 180;
+        const innerAngle = ((i * 72 + 36) - 90) * Math.PI / 180;
+        const outerR = size * 0.9;
+        const innerR = size * 0.4;
+        if (i === 0) ctx.moveTo(cx + Math.cos(outerAngle) * outerR, cy + Math.sin(outerAngle) * outerR);
+        else ctx.lineTo(cx + Math.cos(outerAngle) * outerR, cy + Math.sin(outerAngle) * outerR);
+        ctx.lineTo(cx + Math.cos(innerAngle) * innerR, cy + Math.sin(innerAngle) * innerR);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      break;
+    }
+
+    case 'hexagon':
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const angle = (i * 60 - 30) * Math.PI / 180;
+        const px = cx + Math.cos(angle) * size * 0.85;
+        const py = cy + Math.sin(angle) * size * 0.85;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Inner hexagon shine
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const angle = (i * 60 - 30) * Math.PI / 180;
+        const px = cx + Math.cos(angle) * size * 0.45;
+        const py = cy + Math.sin(angle) * size * 0.45 - size * 0.1;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      break;
+
+    case 'pentagon':
+      ctx.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const angle = (i * 72 - 90) * Math.PI / 180;
+        const px = cx + Math.cos(angle) * size * 0.85;
+        const py = cy + Math.sin(angle) * size * 0.85;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      break;
+  }
+
+  // Draw special overlays
+  if (special === SPECIAL.STRIPED_H || special === SPECIAL.STRIPED_V) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 2;
+    if (special === SPECIAL.STRIPED_H) {
+      for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(cx - size * 0.6, cy + i * size * 0.25);
+        ctx.lineTo(cx + size * 0.6, cy + i * size * 0.25);
+        ctx.stroke();
+      }
+    } else {
+      for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(cx + i * size * 0.25, cy - size * 0.6);
+        ctx.lineTo(cx + i * size * 0.25, cy + size * 0.6);
+        ctx.stroke();
+      }
+    }
+  }
+
+  if (special === SPECIAL.BOMB) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 0.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 0.25, 0, Math.PI * 2);
+    ctx.stroke();
+    // Cross lines
+    for (let i = 0; i < 4; i++) {
+      const angle = i * Math.PI / 4;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(angle) * size * 0.25, cy + Math.sin(angle) * size * 0.25);
+      ctx.lineTo(cx + Math.cos(angle) * size * 0.6, cy + Math.sin(angle) * size * 0.6);
+      ctx.stroke();
+    }
+  }
+
+  if (special === SPECIAL.RAINBOW) {
+    // Rainbow overlay - concentric colorful arcs
+    const rainbowColors = ['#ff4757', '#ffa502', '#2ed573', '#3742fa', '#a55eea'];
+    rainbowColors.forEach((c, i) => {
+      ctx.strokeStyle = c;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath();
+      ctx.arc(cx, cy, size * (0.3 + i * 0.12), 0, Math.PI * 2);
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+    // Sparkle center
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// --- Easing Functions ---
+function easeOutBounce(t) {
+  if (t < 1 / 2.75) return 7.5625 * t * t;
+  if (t < 2 / 2.75) { t -= 1.5 / 2.75; return 7.5625 * t * t + 0.75; }
+  if (t < 2.5 / 2.75) { t -= 2.25 / 2.75; return 7.5625 * t * t + 0.9375; }
+  t -= 2.625 / 2.75;
+  return 7.5625 * t * t + 0.984375;
+}
+
+function easeOutQuad(t) { return t * (2 - t); }
+function easeInOutCubic(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+function easeOutBack(t) { const c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); }
+
+// --- Game State ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const audio = new AudioEngine();
+const particles = new ParticleSystem();
+
+let cellSize, gridOffsetX, gridOffsetY, canvasW, canvasH;
+let board = [];    // board[row][col] = { type, special, ... }
+let state = 'menu'; // menu, levelSelect, playing, animating, gameOver, levelComplete
+let currentLevel = 0;
+let score = 0;
+let movesLeft = 0;
+let comboCount = 0;
+let selectedGem = null;
+let swapAnim = null;
+let fallAnims = [];
+let matchAnims = [];
+let specialAnims = [];
+let screenFlash = 0;
+let sparkles = [];
+let hintTimer = 0;
+let hintGems = null;
+let levelProgress = [false, false, false, false, false]; // which levels completed
+let mouseDown = false;
+let dragStart = null;
+let hoveredCell = null;
+let lastTime = 0;
+let scorePopups = [];
+let menuAnim = 0;
+
+// Load saved progress
+try {
+  const saved = localStorage.getItem('jewelCascadeProgress');
+  if (saved) levelProgress = JSON.parse(saved);
+} catch(e) {}
+
+function saveProgress() {
+  try { localStorage.setItem('jewelCascadeProgress', JSON.stringify(levelProgress)); } catch(e) {}
+}
+
+// --- Resize ---
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  canvasW = window.innerWidth;
+  canvasH = window.innerHeight;
+  canvas.width = canvasW * dpr;
+  canvas.height = canvasH * dpr;
+  canvas.style.width = canvasW + 'px';
+  canvas.style.height = canvasH + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Calculate cell size to fit the grid
+  const maxGridW = canvasW * 0.85;
+  const maxGridH = canvasH * 0.65;
+  cellSize = Math.min(maxGridW / COLS, maxGridH / ROWS, 70);
+  gridOffsetX = (canvasW - cellSize * COLS) / 2;
+  gridOffsetY = (canvasH - cellSize * ROWS) / 2 + 40;
+}
+
+window.addEventListener('resize', resize);
+resize();
+
+// --- Board Logic ---
+function createGem(type, special) {
+  return { type, special: special || SPECIAL.NONE, offsetY: 0, scale: 1, alpha: 1, sparkleTimer: Math.random() * 100 };
+}
+
+function randomType() {
+  return Math.floor(Math.random() * GEM_TYPES);
+}
+
+function initBoard() {
+  board = [];
+  for (let r = 0; r < ROWS; r++) {
+    board[r] = [];
+    for (let c = 0; c < COLS; c++) {
+      let type;
+      // Avoid initial matches
+      do {
+        type = randomType();
+      } while (
+        (c >= 2 && board[r][c-1].type === type && board[r][c-2].type === type) ||
+        (r >= 2 && board[r-1][c].type === type && board[r-2][c].type === type)
+      );
+      board[r][c] = createGem(type);
+    }
+  }
+}
+
+function isValid(r, c) {
+  return r >= 0 && r < ROWS && c >= 0 && c < COLS;
+}
+
+function isAdjacent(r1, c1, r2, c2) {
+  return Math.abs(r1 - r2) + Math.abs(c1 - c2) === 1;
+}
+
+// --- Match Detection ---
+function findMatches() {
+  const matched = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  const matchGroups = [];
+
+  // Horizontal matches
+  for (let r = 0; r < ROWS; r++) {
+    let c = 0;
+    while (c < COLS) {
+      const type = board[r][c].type;
+      if (type === GEM.NONE) { c++; continue; }
+      let end = c + 1;
+      while (end < COLS && board[r][end].type === type) end++;
+      if (end - c >= MIN_MATCH) {
+        const group = [];
+        for (let i = c; i < end; i++) {
+          matched[r][i] = true;
+          group.push({ r, c: i });
+        }
+        matchGroups.push({ cells: group, dir: 'h', length: end - c });
+      }
+      c = end;
+    }
+  }
+
+  // Vertical matches
+  for (let c = 0; c < COLS; c++) {
+    let r = 0;
+    while (r < ROWS) {
+      const type = board[r][c].type;
+      if (type === GEM.NONE) { r++; continue; }
+      let end = r + 1;
+      while (end < ROWS && board[end][c].type === type) end++;
+      if (end - r >= MIN_MATCH) {
+        const group = [];
+        for (let i = r; i < end; i++) {
+          matched[i][c] = true;
+          group.push({ r: i, c });
+        }
+        matchGroups.push({ cells: group, dir: 'v', length: end - r });
+      }
+      r = end;
+    }
+  }
+
+  // Detect L/T shapes by merging overlapping groups of same type
+  const mergedGroups = [];
+  const used = new Set();
+
+  for (let i = 0; i < matchGroups.length; i++) {
+    if (used.has(i)) continue;
+    let merged = [...matchGroups[i].cells];
+    let mergedDirs = [matchGroups[i].dir];
+    let changed = true;
+
+    while (changed) {
+      changed = false;
+      for (let j = i + 1; j < matchGroups.length; j++) {
+        if (used.has(j)) continue;
+        const type1 = board[matchGroups[i].cells[0].r][matchGroups[i].cells[0].c].type;
+        const type2 = board[matchGroups[j].cells[0].r][matchGroups[j].cells[0].c].type;
+        if (type1 !== type2) continue;
+
+        // Check overlap
+        const hasOverlap = matchGroups[j].cells.some(cell =>
+          merged.some(m => m.r === cell.r && m.c === cell.c)
+        );
+        if (hasOverlap) {
+          matchGroups[j].cells.forEach(cell => {
+            if (!merged.some(m => m.r === cell.r && m.c === cell.c)) {
+              merged.push(cell);
+            }
+          });
+          mergedDirs.push(matchGroups[j].dir);
+          used.add(j);
+          changed = true;
+        }
+      }
+    }
+    used.add(i);
+
+    // Determine special type for merged group
+    let specialType = SPECIAL.NONE;
+    const totalLength = merged.length;
+    const hasH = mergedDirs.includes('h');
+    const hasV = mergedDirs.includes('v');
+
+    if (hasH && hasV) {
+      // L or T shape
+      specialType = SPECIAL.BOMB;
+    } else if (totalLength >= 5) {
+      specialType = SPECIAL.RAINBOW;
+    } else if (totalLength === 4) {
+      specialType = hasH ? SPECIAL.STRIPED_V : SPECIAL.STRIPED_H;
+    }
+
+    mergedGroups.push({ cells: merged, special: specialType, type: board[merged[0].r][merged[0].c].type });
+  }
+
+  return { matched, groups: mergedGroups };
+}
+
+// --- Special Gem Effects ---
+function triggerSpecialGem(r, c, clearedSet) {
+  const gem = board[r][c];
+  if (!gem || gem.type === GEM.NONE) return;
+
+  const key = `${r},${c}`;
+  if (clearedSet.has(key)) return;
+  clearedSet.add(key);
+
+  const special = gem.special;
+  const cx = gridOffsetX + c * cellSize + cellSize / 2;
+  const cy = gridOffsetY + r * cellSize + cellSize / 2;
+
+  if (special === SPECIAL.STRIPED_H) {
+    audio.play('special');
+    for (let cc = 0; cc < COLS; cc++) {
+      const k = `${r},${cc}`;
+      if (!clearedSet.has(k)) {
+        clearedSet.add(k);
+        if (board[r][cc].special !== SPECIAL.NONE && cc !== c) {
+          triggerSpecialGem(r, cc, clearedSet);
+        }
+      }
+    }
+    // Line particles
+    particles.emitLine(gridOffsetX, cy, gridOffsetX + COLS * cellSize, cy, GEM_COLORS[gem.type][0], 40);
+    specialAnims.push({ type: 'lineH', r, startTime: performance.now() });
+  }
+
+  if (special === SPECIAL.STRIPED_V) {
+    audio.play('special');
+    for (let rr = 0; rr < ROWS; rr++) {
+      const k = `${rr},${c}`;
+      if (!clearedSet.has(k)) {
+        clearedSet.add(k);
+        if (board[rr][c].special !== SPECIAL.NONE && rr !== r) {
+          triggerSpecialGem(rr, c, clearedSet);
+        }
+      }
+    }
+    particles.emitLine(cx, gridOffsetY, cx, gridOffsetY + ROWS * cellSize, GEM_COLORS[gem.type][0], 40);
+    specialAnims.push({ type: 'lineV', c, startTime: performance.now() });
+  }
+
+  if (special === SPECIAL.BOMB) {
+    audio.play('special');
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const nr = r + dr, nc = c + dc;
+        if (isValid(nr, nc)) {
+          const k = `${nr},${nc}`;
+          if (!clearedSet.has(k)) {
+            clearedSet.add(k);
+            if (board[nr][nc].special !== SPECIAL.NONE && !(dr === 0 && dc === 0)) {
+              triggerSpecialGem(nr, nc, clearedSet);
+            }
+          }
+        }
+      }
+    }
+    particles.emit(cx, cy, GEM_COLORS[gem.type][0], 30, 6, 50);
+    specialAnims.push({ type: 'bomb', r, c, startTime: performance.now() });
+    screenFlash = 0.3;
+  }
+
+  if (special === SPECIAL.RAINBOW) {
+    audio.play('special');
+    // Clear all gems of a random type (or the swapped type)
+    const targetType = gem._rainbowTarget !== undefined ? gem._rainbowTarget : randomType();
+    for (let rr = 0; rr < ROWS; rr++) {
+      for (let cc = 0; cc < COLS; cc++) {
+        if (board[rr][cc].type === targetType) {
+          const k = `${rr},${cc}`;
+          if (!clearedSet.has(k)) {
+            clearedSet.add(k);
+            const px = gridOffsetX + cc * cellSize + cellSize / 2;
+            const py = gridOffsetY + rr * cellSize + cellSize / 2;
+            particles.emit(px, py, GEM_COLORS[targetType][0], 8, 3, 30);
+          }
+        }
+      }
+    }
+    particles.emit(cx, cy, '#fff', 40, 8, 60);
+    screenFlash = 0.5;
+    specialAnims.push({ type: 'rainbow', startTime: performance.now() });
+  }
+}
+
+// --- Process Matches ---
+function processMatches(swapPos) {
+  const { matched, groups } = findMatches();
+  if (groups.length === 0) return false;
+
+  comboCount++;
+  let matchScore = 0;
+
+  audio.play(comboCount > 1 ? 'combo' : 'match', comboCount);
+
+  const clearedSet = new Set();
+
+  // First pass: trigger specials on matched gems that are already special
+  for (const group of groups) {
+    for (const cell of group.cells) {
+      if (board[cell.r][cell.c].special !== SPECIAL.NONE) {
+        triggerSpecialGem(cell.r, cell.c, clearedSet);
+      }
+    }
+  }
+
+  // Now handle creating new specials from groups
+  for (const group of groups) {
+    // Determine where to place special gem
+    let specialR, specialC;
+    if (swapPos && group.cells.some(cell => cell.r === swapPos.r && cell.c === swapPos.c)) {
+      specialR = swapPos.r;
+      specialC = swapPos.c;
+    } else {
+      const mid = Math.floor(group.cells.length / 2);
+      specialR = group.cells[mid].r;
+      specialC = group.cells[mid].c;
+    }
+
+    // Mark cells as cleared
+    group.cells.forEach(cell => {
+      clearedSet.add(`${cell.r},${cell.c}`);
+      const px = gridOffsetX + cell.c * cellSize + cellSize / 2;
+      const py = gridOffsetY + cell.r * cellSize + cellSize / 2;
+      particles.emit(px, py, GEM_COLORS[board[cell.r][cell.c].type][0], 6, 4, 30);
+    });
+
+    matchScore += group.cells.length * 10 * comboCount;
+
+    // Place special gem if needed
+    if (group.special !== SPECIAL.NONE) {
+      board[specialR][specialC] = createGem(group.type, group.special);
+      board[specialR][specialC].scale = 0;
+      clearedSet.delete(`${specialR},${specialC}`);
+    }
+  }
+
+  // Clear matched gems
+  clearedSet.forEach(key => {
+    const [r, c] = key.split(',').map(Number);
+    if (isValid(r, c)) {
+      board[r][c] = createGem(GEM.NONE);
+    }
+  });
+
+  // Score popup
+  const avgR = groups[0].cells.reduce((s, c) => s + c.r, 0) / groups[0].cells.length;
+  const avgC = groups[0].cells.reduce((s, c) => s + c.c, 0) / groups[0].cells.length;
+  scorePopups.push({
+    x: gridOffsetX + avgC * cellSize + cellSize / 2,
+    y: gridOffsetY + avgR * cellSize,
+    text: `+${matchScore}${comboCount > 1 ? ' x' + comboCount : ''}`,
+    life: 60,
+    maxLife: 60,
+  });
+
+  score += matchScore;
+
+  if (comboCount >= 3) {
+    screenFlash = Math.min(0.4, comboCount * 0.1);
+  }
+
+  return true;
+}
+
+// --- Gravity / Fill ---
+function applyGravity() {
+  let fell = false;
+  for (let c = 0; c < COLS; c++) {
+    let emptyRow = ROWS - 1;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      if (board[r][c].type !== GEM.NONE) {
+        if (r !== emptyRow) {
+          board[emptyRow][c] = board[r][c];
+          board[emptyRow][c].offsetY = (r - emptyRow) * cellSize;
+          board[r][c] = createGem(GEM.NONE);
+          fell = true;
+        }
+        emptyRow--;
+      }
+    }
+    // Fill empty spots at top
+    for (let r = emptyRow; r >= 0; r--) {
+      board[r][c] = createGem(randomType());
+      board[r][c].offsetY = (r - emptyRow - 1) * cellSize - cellSize;
+      fell = true;
+    }
+  }
+  return fell;
+}
+
+// --- Check if any valid moves exist ---
+function hasValidMoves() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      // Try swap right
+      if (c + 1 < COLS) {
+        swapGems(r, c, r, c + 1);
+        const { groups } = findMatches();
+        swapGems(r, c, r, c + 1);
+        if (groups.length > 0) return { r1: r, c1: c, r2: r, c2: c + 1 };
+      }
+      // Try swap down
+      if (r + 1 < ROWS) {
+        swapGems(r, c, r + 1, c);
+        const { groups } = findMatches();
+        swapGems(r, c, r + 1, c);
+        if (groups.length > 0) return { r1: r, c1: c, r2: r + 1, c2: c };
+      }
+    }
+  }
+  return null;
+}
+
+function swapGems(r1, c1, r2, c2) {
+  const temp = board[r1][c1];
+  board[r1][c1] = board[r2][c2];
+  board[r2][c2] = temp;
+}
+
+// --- Handle Move ---
+function handleSwap(r1, c1, r2, c2) {
+  if (state !== 'playing') return;
+  if (!isAdjacent(r1, c1, r2, c2)) return;
+
+  audio.init();
+  audio.play('swap');
+
+  state = 'animating';
+  hintTimer = 0;
+  hintGems = null;
+
+  // Handle rainbow gem swap special case
+  if (board[r1][c1].special === SPECIAL.RAINBOW && board[r2][c2].type !== GEM.NONE) {
+    board[r1][c1]._rainbowTarget = board[r2][c2].type;
+  }
+  if (board[r2][c2].special === SPECIAL.RAINBOW && board[r1][c1].type !== GEM.NONE) {
+    board[r2][c2]._rainbowTarget = board[r1][c1].type;
+  }
+
+  swapAnim = {
+    r1, c1, r2, c2,
+    startTime: performance.now(),
+    duration: SWAP_DURATION,
+    phase: 'forward',
+  };
+}
+
+function onSwapComplete() {
+  const { r1, c1, r2, c2, phase } = swapAnim;
+  swapGems(r1, c1, r2, c2);
+
+  if (phase === 'forward') {
+    const hasMatch = findMatches().groups.length > 0;
+    // Also check if either gem is a rainbow gem being swapped with a colored gem
+    const isRainbowSwap = board[r1][c1].special === SPECIAL.RAINBOW || board[r2][c2].special === SPECIAL.RAINBOW;
+
+    if (hasMatch || isRainbowSwap) {
+      comboCount = 0;
+      movesLeft--;
+      startMatchPhase({ r: r1, c: c1 });
+    } else {
+      // Swap back
+      swapAnim = {
+        r1, c1, r2, c2,
+        startTime: performance.now(),
+        duration: SWAP_DURATION,
+        phase: 'backward',
+      };
+      swapGems(r1, c1, r2, c2); // Undo for animation
+    }
+  } else {
+    swapAnim = null;
+    state = 'playing';
+  }
+}
+
+function startMatchPhase(swapPos) {
+  const hadMatch = processMatches(swapPos);
+  if (hadMatch) {
+    matchAnims.push({ startTime: performance.now(), duration: MATCH_FLASH_DURATION });
+    setTimeout(() => {
+      applyGravity();
+      // After gravity settles, check for more matches
+      setTimeout(() => {
+        const moreMatches = findMatches().groups.length > 0;
+        if (moreMatches) {
+          startMatchPhase(null);
+        } else {
+          finishTurn();
+        }
+      }, 400);
+    }, MATCH_FLASH_DURATION);
+  } else {
+    finishTurn();
+  }
+}
+
+function finishTurn() {
+  // Check win/lose
+  if (score >= LEVELS[currentLevel].target) {
+    state = 'levelComplete';
+    levelProgress[currentLevel] = true;
+    saveProgress();
+    audio.play('levelComplete');
+    screenFlash = 0.6;
+    return;
+  }
+
+  if (movesLeft <= 0) {
+    state = 'gameOver';
+    audio.play('fail');
+    return;
+  }
+
+  // Check if valid moves exist, if not, reshuffle
+  const validMove = hasValidMoves();
+  if (!validMove) {
+    shuffleBoard();
+  }
+
+  state = 'playing';
+  hintTimer = 0;
+}
+
+function shuffleBoard() {
+  // Collect all gem types
+  const gems = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      gems.push(board[r][c].type);
+    }
+  }
+  // Shuffle
+  for (let i = gems.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [gems[i], gems[j]] = [gems[j], gems[i]];
+  }
+  let idx = 0;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      board[r][c] = createGem(gems[idx++]);
+    }
+  }
+  // Clear any immediate matches
+  while (findMatches().groups.length > 0) {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (findMatches().matched[r][c]) {
+          board[r][c] = createGem(randomType());
+        }
+      }
+    }
+  }
+}
+
+// --- Input Handling ---
+function getCellFromPos(x, y) {
+  const c = Math.floor((x - gridOffsetX) / cellSize);
+  const r = Math.floor((y - gridOffsetY) / cellSize);
+  if (r >= 0 && r < ROWS && c >= 0 && c < COLS) return { r, c };
+  return null;
+}
+
+function handlePointerDown(x, y) {
+  audio.init();
+
+  if (state === 'menu') {
+    state = 'levelSelect';
+    return;
+  }
+
+  if (state === 'levelSelect') {
+    handleLevelSelectClick(x, y);
+    return;
+  }
+
+  if (state === 'levelComplete' || state === 'gameOver') {
+    state = 'levelSelect';
+    return;
+  }
+
+  if (state !== 'playing') return;
+
+  const cell = getCellFromPos(x, y);
+  if (!cell) { selectedGem = null; return; }
+
+  if (selectedGem) {
+    if (isAdjacent(selectedGem.r, selectedGem.c, cell.r, cell.c)) {
+      handleSwap(selectedGem.r, selectedGem.c, cell.r, cell.c);
+      selectedGem = null;
+    } else {
+      selectedGem = cell;
+    }
+  } else {
+    selectedGem = cell;
+    dragStart = { x, y, r: cell.r, c: cell.c };
+  }
+  mouseDown = true;
+}
+
+function handlePointerMove(x, y) {
+  hoveredCell = getCellFromPos(x, y);
+
+  if (!mouseDown || !dragStart || state !== 'playing') return;
+
+  const dx = x - dragStart.x;
+  const dy = y - dragStart.y;
+  const threshold = cellSize * 0.3;
+
+  if (Math.abs(dx) > threshold || Math.abs(dy) > threshold) {
+    let targetR = dragStart.r, targetC = dragStart.c;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      targetC += dx > 0 ? 1 : -1;
+    } else {
+      targetR += dy > 0 ? 1 : -1;
+    }
+    if (isValid(targetR, targetC)) {
+      handleSwap(dragStart.r, dragStart.c, targetR, targetC);
+      selectedGem = null;
+    }
+    mouseDown = false;
+    dragStart = null;
+  }
+}
+
+function handlePointerUp() {
+  mouseDown = false;
+  dragStart = null;
+}
+
+// Mouse events
+canvas.addEventListener('mousedown', e => handlePointerDown(e.offsetX, e.offsetY));
+canvas.addEventListener('mousemove', e => handlePointerMove(e.offsetX, e.offsetY));
+canvas.addEventListener('mouseup', handlePointerUp);
+
+// Touch events
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches[0];
+  handlePointerDown(touch.clientX - rect.left, touch.clientY - rect.top);
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches[0];
+  handlePointerMove(touch.clientX - rect.left, touch.clientY - rect.top);
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  handlePointerUp();
+}, { passive: false });
+
+// --- Level Select ---
+function getLevelButtonRects() {
+  const bw = Math.min(canvasW * 0.15, 80);
+  const bh = bw;
+  const gap = bw * 0.4;
+  const totalW = LEVELS.length * bw + (LEVELS.length - 1) * gap;
+  const startX = (canvasW - totalW) / 2;
+  const y = canvasH * 0.5;
+  return LEVELS.map((_, i) => ({
+    x: startX + i * (bw + gap),
+    y,
+    w: bw,
+    h: bh,
+  }));
+}
+
+function handleLevelSelectClick(x, y) {
+  const rects = getLevelButtonRects();
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+      // Level 1 always unlocked, others need previous completed
+      if (i === 0 || levelProgress[i - 1]) {
+        startLevel(i);
+      }
+      return;
+    }
+  }
+}
+
+function startLevel(idx) {
+  currentLevel = idx;
+  score = 0;
+  movesLeft = LEVELS[idx].moves;
+  comboCount = 0;
+  selectedGem = null;
+  hintTimer = 0;
+  hintGems = null;
+  scorePopups = [];
+  initBoard();
+  // Clear initial matches
+  while (findMatches().groups.length > 0) {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (findMatches().matched[r][c]) {
+          board[r][c] = createGem(randomType());
+        }
+      }
+    }
+  }
+  state = 'playing';
+}
+
+// --- Drawing ---
+function drawBackground(time) {
+  const colors = state === 'playing' || state === 'animating' || state === 'levelComplete' || state === 'gameOver'
+    ? LEVELS[currentLevel].bg
+    : ['#0f0c29', '#302b63', '#24243e'];
+
+  const grad = ctx.createLinearGradient(0, 0, canvasW, canvasH);
+  grad.addColorStop(0, colors[0]);
+  grad.addColorStop(0.5, colors[1]);
+  grad.addColorStop(1, colors[2]);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvasW, canvasH);
+
+  // Animated stars
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  for (let i = 0; i < 50; i++) {
+    const sx = ((i * 137.5 + time * 0.01 * (i % 3 + 1)) % canvasW);
+    const sy = ((i * 97.3 + time * 0.005 * (i % 2 + 1)) % canvasH);
+    const ss = 1 + Math.sin(time * 0.003 + i) * 0.5;
+    ctx.beginPath();
+    ctx.arc(sx, sy, ss, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawGrid(time) {
+  // Grid background
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  const padding = 6;
+  ctx.beginPath();
+  roundRect(ctx, gridOffsetX - padding, gridOffsetY - padding,
+    COLS * cellSize + padding * 2, ROWS * cellSize + padding * 2, 12);
+  ctx.fill();
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  for (let r = 0; r <= ROWS; r++) {
+    ctx.beginPath();
+    ctx.moveTo(gridOffsetX, gridOffsetY + r * cellSize);
+    ctx.lineTo(gridOffsetX + COLS * cellSize, gridOffsetY + r * cellSize);
+    ctx.stroke();
+  }
+  for (let c = 0; c <= COLS; c++) {
+    ctx.beginPath();
+    ctx.moveTo(gridOffsetX + c * cellSize, gridOffsetY);
+    ctx.lineTo(gridOffsetX + c * cellSize, gridOffsetY + ROWS * cellSize);
+    ctx.stroke();
+  }
+
+  // Draw gems
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const gem = board[r][c];
+      if (gem.type === GEM.NONE) continue;
+
+      // Animate falling
+      if (gem.offsetY !== 0) {
+        gem.offsetY *= 0.85;
+        if (Math.abs(gem.offsetY) < 0.5) gem.offsetY = 0;
+      }
+
+      // Animate scale (for new specials)
+      if (gem.scale < 1) {
+        gem.scale += 0.05;
+        if (gem.scale > 1) gem.scale = 1;
+      }
+
+      let drawX = gridOffsetX + c * cellSize + cellSize / 2;
+      let drawY = gridOffsetY + r * cellSize + cellSize / 2 + gem.offsetY;
+
+      // Swap animation offset
+      if (swapAnim) {
+        const { r1, c1, r2, c2, startTime, duration } = swapAnim;
+        const t = Math.min(1, (performance.now() - startTime) / duration);
+        const ease = easeInOutCubic(t);
+
+        if (r === r1 && c === c1) {
+          drawX += (c2 - c1) * cellSize * ease;
+          drawY += (r2 - r1) * cellSize * ease;
+        } else if (r === r2 && c === c2) {
+          drawX += (c1 - c2) * cellSize * ease;
+          drawY += (r1 - r2) * cellSize * ease;
+        }
+      }
+
+      // Selected gem highlight
+      if (selectedGem && selectedGem.r === r && selectedGem.c === c) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(drawX, drawY, cellSize * 0.45, 0, Math.PI * 2);
+        ctx.stroke();
+        // Pulsing glow
+        const pulse = Math.sin(time * 0.005) * 0.2 + 0.5;
+        ctx.strokeStyle = `rgba(255,255,255,${pulse})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(drawX, drawY, cellSize * 0.5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Hint highlight
+      if (hintGems && ((hintGems.r1 === r && hintGems.c1 === c) || (hintGems.r2 === r && hintGems.c2 === c))) {
+        const pulse = Math.sin(time * 0.008) * 0.3 + 0.5;
+        ctx.strokeStyle = `rgba(255, 255, 100, ${pulse})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(drawX, drawY, cellSize * 0.48, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Hover effect
+      if (hoveredCell && hoveredCell.r === r && hoveredCell.c === c && state === 'playing') {
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.fillRect(gridOffsetX + c * cellSize, gridOffsetY + r * cellSize, cellSize, cellSize);
+      }
+
+      const gemSize = cellSize * 0.38 * gem.scale;
+      ctx.save();
+      ctx.globalAlpha = gem.alpha;
+      drawGemShape(ctx, gem.type, drawX, drawY, gemSize, GEM_COLORS[gem.type], gem.special);
+
+      // Sparkle effect
+      gem.sparkleTimer += 0.05;
+      if (Math.sin(gem.sparkleTimer) > 0.95) {
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        const sx = drawX + Math.cos(gem.sparkleTimer * 3) * gemSize * 0.4;
+        const sy = drawY + Math.sin(gem.sparkleTimer * 2) * gemSize * 0.4;
+        drawSparkle(ctx, sx, sy, 3);
+      }
+
+      ctx.restore();
+    }
+  }
+}
+
+function drawSparkle(ctx, x, y, size) {
+  ctx.beginPath();
+  ctx.moveTo(x - size, y);
+  ctx.lineTo(x, y - size * 0.4);
+  ctx.lineTo(x + size, y);
+  ctx.lineTo(x, y + size * 0.4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x, y - size);
+  ctx.lineTo(x + size * 0.4, y);
+  ctx.lineTo(x, y + size);
+  ctx.lineTo(x - size * 0.4, y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawHUD() {
+  if (state !== 'playing' && state !== 'animating' && state !== 'levelComplete' && state !== 'gameOver') return;
+
+  const level = LEVELS[currentLevel];
+  const hudY = gridOffsetY - 55;
+
+  // Level indicator
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.font = `bold ${Math.min(20, canvasW * 0.04)}px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(`Level ${currentLevel + 1}`, canvasW / 2, hudY - 15);
+
+  // Score
+  ctx.font = `bold ${Math.min(28, canvasW * 0.055)}px 'Segoe UI', sans-serif`;
+  ctx.fillStyle = '#ffd700';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${score}`, gridOffsetX + 5, hudY + 15);
+
+  // Target
+  ctx.font = `${Math.min(14, canvasW * 0.03)}px 'Segoe UI', sans-serif`;
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillText(`Target: ${level.target}`, gridOffsetX + 5, hudY + 32);
+
+  // Progress bar
+  const barW = COLS * cellSize;
+  const barH = 6;
+  const barY = hudY + 38;
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  roundRect(ctx, gridOffsetX, barY, barW, barH, 3);
+  ctx.fill();
+  const progress = Math.min(1, score / level.target);
+  const progressGrad = ctx.createLinearGradient(gridOffsetX, 0, gridOffsetX + barW * progress, 0);
+  progressGrad.addColorStop(0, '#ffd700');
+  progressGrad.addColorStop(1, '#ff6348');
+  ctx.fillStyle = progressGrad;
+  roundRect(ctx, gridOffsetX, barY, barW * progress, barH, 3);
+  ctx.fill();
+
+  // Moves
+  ctx.font = `bold ${Math.min(24, canvasW * 0.045)}px 'Segoe UI', sans-serif`;
+  ctx.fillStyle = movesLeft <= 5 ? '#ff4757' : 'rgba(255,255,255,0.9)';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${movesLeft}`, gridOffsetX + COLS * cellSize - 5, hudY + 15);
+
+  ctx.font = `${Math.min(14, canvasW * 0.03)}px 'Segoe UI', sans-serif`;
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillText('Moves', gridOffsetX + COLS * cellSize - 5, hudY + 32);
+}
+
+function drawScorePopups() {
+  scorePopups = scorePopups.filter(p => p.life > 0);
+  scorePopups.forEach(p => {
+    const t = 1 - p.life / p.maxLife;
+    const alpha = 1 - t;
+    const y = p.y - t * 40;
+    const scale = 1 + t * 0.3;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = `bold ${Math.round(16 * scale)}px 'Segoe UI', sans-serif`;
+    ctx.fillStyle = '#ffd700';
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.lineWidth = 3;
+    ctx.textAlign = 'center';
+    ctx.strokeText(p.text, p.x, y);
+    ctx.fillText(p.text, p.x, y);
+    ctx.restore();
+    p.life--;
+  });
+}
+
+function drawSpecialEffects(time) {
+  specialAnims = specialAnims.filter(a => time - a.startTime < SPECIAL_EFFECT_DURATION);
+  specialAnims.forEach(a => {
+    const t = (time - a.startTime) / SPECIAL_EFFECT_DURATION;
+
+    if (a.type === 'lineH') {
+      const y = gridOffsetY + a.r * cellSize + cellSize / 2;
+      ctx.strokeStyle = `rgba(255,255,255,${1 - t})`;
+      ctx.lineWidth = cellSize * (1 - t) * 0.8;
+      ctx.beginPath();
+      ctx.moveTo(gridOffsetX, y);
+      ctx.lineTo(gridOffsetX + COLS * cellSize, y);
+      ctx.stroke();
+    }
+
+    if (a.type === 'lineV') {
+      const x = gridOffsetX + a.c * cellSize + cellSize / 2;
+      ctx.strokeStyle = `rgba(255,255,255,${1 - t})`;
+      ctx.lineWidth = cellSize * (1 - t) * 0.8;
+      ctx.beginPath();
+      ctx.moveTo(x, gridOffsetY);
+      ctx.lineTo(x, gridOffsetY + ROWS * cellSize);
+      ctx.stroke();
+    }
+
+    if (a.type === 'bomb') {
+      const cx = gridOffsetX + a.c * cellSize + cellSize / 2;
+      const cy = gridOffsetY + a.r * cellSize + cellSize / 2;
+      const radius = cellSize * 2 * easeOutQuad(t);
+      ctx.strokeStyle = `rgba(255,200,50,${1 - t})`;
+      ctx.lineWidth = 4 * (1 - t);
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    if (a.type === 'rainbow') {
+      ctx.fillStyle = `rgba(255,255,255,${0.3 * (1 - t)})`;
+      ctx.fillRect(0, 0, canvasW, canvasH);
+    }
+  });
+}
+
+function drawScreenFlash() {
+  if (screenFlash > 0) {
+    ctx.fillStyle = `rgba(255,255,255,${screenFlash})`;
+    ctx.fillRect(0, 0, canvasW, canvasH);
+    screenFlash *= 0.92;
+    if (screenFlash < 0.01) screenFlash = 0;
+  }
+}
+
+function drawMenu(time) {
+  menuAnim += 0.016;
+
+  // Title
+  const titleY = canvasH * 0.3 + Math.sin(menuAnim * 2) * 10;
+  ctx.save();
+  ctx.textAlign = 'center';
+
+  // Title shadow
+  ctx.font = `bold ${Math.min(56, canvasW * 0.1)}px 'Segoe UI', sans-serif`;
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillText('Jewel Cascade', canvasW / 2 + 3, titleY + 3);
+
+  // Title gradient
+  const titleGrad = ctx.createLinearGradient(canvasW / 2 - 150, titleY - 30, canvasW / 2 + 150, titleY + 30);
+  titleGrad.addColorStop(0, '#ffd700');
+  titleGrad.addColorStop(0.5, '#ff6348');
+  titleGrad.addColorStop(1, '#ff4757');
+  ctx.fillStyle = titleGrad;
+  ctx.fillText('Jewel Cascade', canvasW / 2, titleY);
+
+  // Subtitle
+  ctx.font = `${Math.min(20, canvasW * 0.04)}px 'Segoe UI', sans-serif`;
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.fillText('Match 3 Puzzle', canvasW / 2, titleY + 40);
+
+  // Play button
+  const btnW = 200, btnH = 55;
+  const btnX = canvasW / 2 - btnW / 2;
+  const btnY = canvasH * 0.55;
+
+  const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX + btnW, btnY + btnH);
+  btnGrad.addColorStop(0, '#ffd700');
+  btnGrad.addColorStop(1, '#ff6348');
+  ctx.fillStyle = btnGrad;
+  roundRect(ctx, btnX, btnY, btnW, btnH, 28);
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.min(24, canvasW * 0.045)}px 'Segoe UI', sans-serif`;
+  ctx.fillText('PLAY', canvasW / 2, btnY + btnH / 2 + 8);
+
+  // Animated gems around
+  for (let i = 0; i < 6; i++) {
+    const angle = menuAnim * 0.5 + i * Math.PI / 3;
+    const radius = Math.min(canvasW, canvasH) * 0.32;
+    const gx = canvasW / 2 + Math.cos(angle) * radius;
+    const gy = canvasH / 2 + Math.sin(angle) * radius * 0.6;
+    drawGemShape(ctx, i, gx, gy, 18, GEM_COLORS[i], SPECIAL.NONE);
+  }
+
+  ctx.restore();
+}
+
+function drawLevelSelect(time) {
+  ctx.textAlign = 'center';
+
+  // Title
+  ctx.font = `bold ${Math.min(40, canvasW * 0.07)}px 'Segoe UI', sans-serif`;
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText('Select Level', canvasW / 2, canvasH * 0.25);
+
+  const rects = getLevelButtonRects();
+
+  rects.forEach((rect, i) => {
+    const unlocked = i === 0 || levelProgress[i - 1];
+    const completed = levelProgress[i];
+
+    // Button bg
+    if (unlocked) {
+      const grad = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.w, rect.y + rect.h);
+      if (completed) {
+        grad.addColorStop(0, '#2ed573');
+        grad.addColorStop(1, '#009432');
+      } else {
+        grad.addColorStop(0, '#3742fa');
+        grad.addColorStop(1, '#1e3799');
+      }
+      ctx.fillStyle = grad;
+    } else {
+      ctx.fillStyle = 'rgba(100,100,100,0.5)';
+    }
+
+    roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 12);
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = unlocked ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 2;
+    roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 12);
+    ctx.stroke();
+
+    // Level number
+    ctx.font = `bold ${Math.min(28, canvasW * 0.05)}px 'Segoe UI', sans-serif`;
+    ctx.fillStyle = unlocked ? '#fff' : 'rgba(255,255,255,0.3)';
+    ctx.fillText(`${i + 1}`, rect.x + rect.w / 2, rect.y + rect.h / 2 + 4);
+
+    // Stars for completed
+    if (completed) {
+      ctx.fillStyle = '#ffd700';
+      ctx.font = `${Math.min(16, canvasW * 0.03)}px 'Segoe UI', sans-serif`;
+      ctx.fillText('\u2605', rect.x + rect.w / 2, rect.y + rect.h - 8);
+    }
+
+    // Lock icon for locked
+    if (!unlocked) {
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.font = `${Math.min(14, canvasW * 0.025)}px 'Segoe UI', sans-serif`;
+      ctx.fillText('\uD83D\uDD12', rect.x + rect.w / 2, rect.y + rect.h - 8);
+    }
+  });
+
+  // Level info
+  ctx.font = `${Math.min(16, canvasW * 0.03)}px 'Segoe UI', sans-serif`;
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillText('Tap a level to play', canvasW / 2, canvasH * 0.75);
+}
+
+function drawOverlay(title, subtitle, buttonText) {
+  // Dim bg
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, 0, canvasW, canvasH);
+
+  ctx.textAlign = 'center';
+
+  // Panel
+  const panelW = Math.min(350, canvasW * 0.85);
+  const panelH = 220;
+  const panelX = (canvasW - panelW) / 2;
+  const panelY = (canvasH - panelH) / 2;
+
+  ctx.fillStyle = 'rgba(20, 20, 60, 0.95)';
+  roundRect(ctx, panelX, panelY, panelW, panelH, 20);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 2;
+  roundRect(ctx, panelX, panelY, panelW, panelH, 20);
+  ctx.stroke();
+
+  // Title
+  ctx.font = `bold ${Math.min(36, canvasW * 0.065)}px 'Segoe UI', sans-serif`;
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText(title, canvasW / 2, panelY + 60);
+
+  // Subtitle
+  ctx.font = `${Math.min(18, canvasW * 0.035)}px 'Segoe UI', sans-serif`;
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.fillText(subtitle, canvasW / 2, panelY + 100);
+
+  // Button
+  const btnW = 160, btnH = 45;
+  const btnX = canvasW / 2 - btnW / 2;
+  const btnY = panelY + panelH - 70;
+  const grad = ctx.createLinearGradient(btnX, btnY, btnX + btnW, btnY + btnH);
+  grad.addColorStop(0, '#ffd700');
+  grad.addColorStop(1, '#ff6348');
+  ctx.fillStyle = grad;
+  roundRect(ctx, btnX, btnY, btnW, btnH, 22);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.min(18, canvasW * 0.035)}px 'Segoe UI', sans-serif`;
+  ctx.fillText(buttonText, canvasW / 2, btnY + btnH / 2 + 6);
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+// --- Hint System ---
+function updateHint(dt) {
+  if (state !== 'playing') { hintTimer = 0; hintGems = null; return; }
+  hintTimer += dt;
+  if (hintTimer > 5000 && !hintGems) {
+    hintGems = hasValidMoves();
+  }
+}
+
+// --- Main Loop ---
+function gameLoop(time) {
+  const dt = time - lastTime;
+  lastTime = time;
+
+  drawBackground(time);
+
+  if (state === 'menu') {
+    drawMenu(time);
+  } else if (state === 'levelSelect') {
+    drawLevelSelect(time);
+  } else {
+    // Update swap animation
+    if (swapAnim) {
+      const t = (performance.now() - swapAnim.startTime) / swapAnim.duration;
+      if (t >= 1) {
+        onSwapComplete();
+      }
+    }
+
+    updateHint(dt);
+    particles.update();
+
+    drawGrid(time);
+    drawHUD();
+    drawSpecialEffects(time);
+    particles.draw(ctx);
+    drawScorePopups();
+    drawScreenFlash();
+
+    if (state === 'levelComplete') {
+      drawOverlay('Level Complete!', `Score: ${score}`, 'Continue');
+    } else if (state === 'gameOver') {
+      drawOverlay('Out of Moves!', `Score: ${score} / ${LEVELS[currentLevel].target}`, 'Try Again');
+    }
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+
+})();
+</script>
+</body>
+</html>
