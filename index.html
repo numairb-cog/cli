@@ -752,6 +752,10 @@ function playerHit() {
 
 function gameOver() {
   gameState = STATE.GAMEOVER;
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('spaceInvadersHighScore', highScore.toString());
+  }
   createExplosion(player.x, player.y, '#00ff88', 30);
 }
 
